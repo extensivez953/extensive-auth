@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "extensive-auth"
+version = "0.1.0"
+description = "Shared Google-OAuth + cookie-session + X-Api-Key auth for the extensive-* ecosystem"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Mike Repa", email = "mrepa@stilwell-associates.com" },
+]
+dependencies = [
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "itsdangerous>=2.1",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7",
+    "pytest-asyncio>=0.21",
+]
+
+[project.urls]
+Repository = "https://github.com/extensivez953/extensive-auth"
+
+[tool.setuptools]
+packages = ["extensive_auth"]
