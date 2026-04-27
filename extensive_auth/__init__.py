@@ -33,8 +33,10 @@ Apps own their own login *page* (HTML/CSS); the package owns the OAuth
 endpoints, session store, and guards.
 """
 from extensive_auth.config import AuthConfig
+from extensive_auth.csrf import check_csrf, new_csrf
 from extensive_auth.guards import require_user, require_user_or_api_key
 from extensive_auth.router import build_auth_router
+from extensive_auth.security_headers import build_security_headers_middleware
 from extensive_auth.session import (
     create_session,
     delete_session,
@@ -45,12 +47,15 @@ from extensive_auth.session import (
 __all__ = [
     "AuthConfig",
     "build_auth_router",
+    "build_security_headers_middleware",
+    "check_csrf",
     "create_session",
     "delete_session",
     "get_session_email",
     "get_session_picture",
+    "new_csrf",
     "require_user",
     "require_user_or_api_key",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
