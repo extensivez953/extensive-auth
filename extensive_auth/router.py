@@ -10,6 +10,7 @@ returned APIRouter. Routes provided:
 The login *page* is the app's responsibility (different apps, different
 brands). This router only handles the OAuth handshake.
 """
+import hmac
 import logging
 import secrets
 from urllib.parse import urlencode
@@ -19,6 +20,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from extensive_auth.config import AuthConfig
+from extensive_auth.rate_limit import (
+    RateLimitState,
+    client_ip,
+    is_rate_limited,
+    record_attempt,
+)
 from extensive_auth.session import (
     consume_oauth_state,
     create_session,
@@ -32,6 +39,14 @@ GOOGLE_AUTH_URL    = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL   = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
+# Short-lived cookie that mirrors the OAuth state value. The server-side
+# state store already prevents replay (single-use, TTL'd). Binding the
+# state to a browser-set cookie additionally prevents an attacker from
+# completing the OAuth flow in a different browser using a callback URL
+# captured from the victim — the cookie never leaves the original browser.
+_STATE_COOKIE = "extensive_oauth_state"
+_STATE_TTL_SECONDS = 600  # 10 min — generous for a slow login
+
 
 def build_auth_router(cfg: AuthConfig) -> APIRouter:
     """Return an APIRouter with the OAuth + logout endpoints.
@@ -41,8 +56,23 @@ def build_auth_router(cfg: AuthConfig) -> APIRouter:
     """
     router = APIRouter()
 
+    # Per-AuthConfig rate-limit state. Lives for the lifetime of the
+    # config (i.e. the running process). Multi-worker setups would
+    # swap this for a shared store; single-worker uvicorn (the standard
+    # extensive-* deployment) is fine as-is.
+    rl_state = RateLimitState()
+
     @router.get("/auth/google/start")
-    def google_start():
+    def google_start(request: Request):
+        ip = client_ip(request)
+        if is_rate_limited(rl_state, ip):
+            log.warning("[extensive_auth] rate-limited /auth/google/start from %s", ip)
+            raise HTTPException(
+                status_code=429,
+                detail="Too many login attempts from this address. Try again later.",
+            )
+        record_attempt(rl_state, ip)
+
         state = secrets.token_urlsafe(24)
         store_oauth_state(cfg, state)
         params = {
@@ -54,12 +84,34 @@ def build_auth_router(cfg: AuthConfig) -> APIRouter:
             "access_type": "online",
             "prompt": "select_account",
         }
-        return RedirectResponse(url=f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+        response = RedirectResponse(url=f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+        # Bind state to this browser via a short-lived cookie. Callback
+        # rejects any state that doesn't match this cookie.
+        response.set_cookie(
+            _STATE_COOKIE,
+            value=state,
+            max_age=_STATE_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.cookie_secure,
+            path="/",
+        )
+        return response
 
     @router.get("/auth/google/callback")
     async def google_callback(request: Request, code: str = "", state: str = ""):
         if not code or not state:
             raise HTTPException(status_code=400, detail="Missing code/state.")
+
+        # Browser-binding check — short-circuits before we touch Google.
+        cookie_state = request.cookies.get(_STATE_COOKIE, "")
+        if not cookie_state or not hmac.compare_digest(state, cookie_state):
+            log.warning(
+                "[extensive_auth] OAuth state cookie mismatch from %s",
+                client_ip(request),
+            )
+            raise HTTPException(status_code=400, detail="State cookie mismatch.")
+
         if not consume_oauth_state(cfg, state):
             raise HTTPException(status_code=400, detail="Expired or invalid state.")
 
@@ -110,6 +162,9 @@ def build_auth_router(cfg: AuthConfig) -> APIRouter:
             secure=cfg.cookie_secure,
             path="/",
         )
+        # State has served its purpose; clear the bind cookie so it can't
+        # leak into later requests.
+        response.delete_cookie(_STATE_COOKIE, path="/")
         return response
 
     @router.get("/auth/logout")
