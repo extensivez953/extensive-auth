@@ -215,10 +215,14 @@ def build_auth_router(cfg: AuthConfig) -> APIRouter:
 
     @router.get("/auth/logout")
     def logout(request: Request, everywhere: str = ""):
+        """SSO mode: one login everywhere means one logout everywhere — end the
+        SSO session too and land on the app's login page flagged ?signed_out=1,
+        which sso_auto_login honours (otherwise the page would sign you straight
+        back in)."""
         delete_session(cfg, request)
         login_url = (cfg.root_path or "") + "/login"
-        if cfg.sso_enabled and everywhere:
-            target = sso_logout_url(cfg, return_url=_absolute(request, login_url))
+        if cfg.sso_enabled:
+            target = sso_logout_url(cfg, return_url=_absolute(request, login_url + "?signed_out=1"))
         else:
             target = login_url
         response = RedirectResponse(url=target, status_code=302)
