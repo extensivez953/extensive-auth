@@ -24,6 +24,17 @@ class AuthConfig:
 
     Cookie name and salt are scoped to the app so two extensive-* apps
     sharing the same domain don't collide on cookies.
+
+    Two login modes, chosen by whether ``sso_url`` is set:
+
+    - **Google** (default): the app runs the Google code flow itself and
+      checks ``allowed_emails``.
+    - **SSO**: the app sends the browser to the fleet SSO
+      (auth.extensive.cloud), which does Google once for everyone and
+      decides per-app access from its grants. The app verifies the token
+      the SSO hands back (``sso_secret``, ``sso_app``). ``allowed_emails``
+      is then optional — an empty list means "trust the SSO's grant";
+      a non-empty one is a second gate on top.
     """
     # Required
     google_client_id: str
@@ -32,7 +43,9 @@ class AuthConfig:
     session_secret: str
 
     # Allowlist of emails permitted to log in. A SINGLE-element set
-    # implements snare's old single-user mode.
+    # implements snare's old single-user mode. "*" allows any verified
+    # Google account (the SSO itself uses this: the grant check happens
+    # after login, against its registry).
     allowed_emails: set[str]
 
     # Optional API key for X-Api-Key auth. Empty string disables api-key
@@ -56,11 +69,20 @@ class AuthConfig:
     # Cookie security. Set False ONLY for local-HTTP development.
     cookie_secure: bool = True
 
+    # Fleet SSO (see class docstring). All three set => SSO mode.
+    sso_url: str = ""
+    sso_secret: str = ""
+    sso_app: str = ""
+
     # Class-level (not constructor) — process-local in-memory session
     # store keyed by signed-cookie session id. Each AuthConfig instance
     # gets its own dict so two apps in the same process don't share
     # sessions (though that's an unusual setup).
     _sessions: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def sso_enabled(self) -> bool:
+        return bool(self.sso_url and self.sso_secret and self.sso_app)
 
     @classmethod
     def from_env(cls, *, prefix: str = "") -> "AuthConfig":
@@ -71,7 +93,10 @@ class AuthConfig:
           {prefix}GOOGLE_CLIENT_SECRET     — required
           {prefix}GOOGLE_REDIRECT_URI      — required
           {prefix}SESSION_SECRET           — required (32+ random bytes hex)
-          {prefix}ALLOWED_EMAILS           — required, comma-separated
+          {prefix}ALLOWED_EMAILS           — required unless SSO_URL is set; comma-separated, or "*"
+          {prefix}SSO_URL                  — optional; set => SSO mode (e.g. https://auth.extensive.cloud)
+          {prefix}SSO_SECRET               — required with SSO_URL; shared with the SSO
+          {prefix}SSO_APP                  — required with SSO_URL; this app's slug in the SSO registry
           {prefix}API_KEY                  — optional
           {prefix}COOKIE_NAME              — optional, default extensive_session
           {prefix}SESSION_SALT             — optional, default extensive-session
@@ -87,13 +112,20 @@ class AuthConfig:
         redirect_uri  = (_env("GOOGLE_REDIRECT_URI") or "").strip()
         secret        = (_env("SESSION_SECRET") or "").strip()
         allow_raw     = (_env("ALLOWED_EMAILS") or "").strip()
+        sso_url       = (_env("SSO_URL") or "").strip().rstrip("/")
+        sso_secret    = (_env("SSO_SECRET") or "").strip()
+        sso_app       = (_env("SSO_APP") or "").strip()
 
         missing: list[str] = []
         if not client_id:     missing.append(prefix + "GOOGLE_CLIENT_ID")
         if not client_secret: missing.append(prefix + "GOOGLE_CLIENT_SECRET")
         if not redirect_uri:  missing.append(prefix + "GOOGLE_REDIRECT_URI")
         if not secret:        missing.append(prefix + "SESSION_SECRET")
-        if not allow_raw:     missing.append(prefix + "ALLOWED_EMAILS")
+        if not allow_raw and not sso_url:
+            missing.append(prefix + "ALLOWED_EMAILS")
+        if sso_url:
+            if not sso_secret: missing.append(prefix + "SSO_SECRET")
+            if not sso_app:    missing.append(prefix + "SSO_APP")
         if missing:
             raise RuntimeError(
                 "extensive_auth: missing required env vars: " + ", ".join(missing)
@@ -121,7 +153,22 @@ class AuthConfig:
             session_ttl=timedelta(days=ttl_days),
             root_path=(_env("ROOT_PATH") or "").rstrip("/"),
             cookie_secure=cookie_secure,
+            sso_url=sso_url,
+            sso_secret=sso_secret,
+            sso_app=sso_app,
         )
 
     def is_allowed(self, email: str) -> bool:
-        return email.lower().strip() in self.allowed_emails
+        """Local allowlist check.
+
+        "*" admits any verified email. In SSO mode an empty allowlist means
+        the SSO's grant is the only gate.
+        """
+        email = email.lower().strip()
+        if not email:
+            return False
+        if "*" in self.allowed_emails:
+            return True
+        if not self.allowed_emails and self.sso_enabled:
+            return True
+        return email in self.allowed_emails

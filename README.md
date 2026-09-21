@@ -20,6 +20,20 @@ Each extensive-* app was reimplementing the same ~150 lines of Google-OAuth + se
 - `require_user(cfg)` — FastAPI Depends factory that 403s when not signed in
 - `require_user_or_api_key(cfg)` — same, but also accepts a matching `X-Api-Key` header
 
+## Fleet SSO mode (v0.3)
+
+Set three env vars and the app stops talking to Google itself:
+
+```
+SSO_URL=https://auth.extensive.cloud
+SSO_SECRET=<shared with extensive-sso>
+SSO_APP=games            # this app's slug in the SSO registry
+```
+
+`/auth/google/start` then bounces the browser to `auth.extensive.cloud/authorize`, which signs the person in with Google once for the whole fleet, checks they hold a grant for `SSO_APP`, and returns them to `/auth/sso/callback` with a 60-second single-use signed token. The app verifies it (`verify_sso_token`) and opens its ordinary local session — templates, guards and cookies are unchanged. `ALLOWED_EMAILS` becomes optional: empty means "the SSO's grant is the gate", non-empty is a second gate on top. `/auth/logout?everywhere=1` also ends the SSO session.
+
+`ALLOWED_EMAILS=*` admits any verified Google account — only the SSO itself uses that, because it decides access *after* login from its registry.
+
 ## What it deliberately doesn't do
 
 - **No login page.** Apps own their own login HTML/CSS. The package only handles the OAuth handshake.
