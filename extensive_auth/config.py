@@ -74,6 +74,11 @@ class AuthConfig:
     sso_secret: str = ""
     sso_app: str = ""
 
+    # Where sessions live. Empty = the process-local dict below (forgotten on
+    # restart). A file path = a SQLite table that survives rebuilds; the SSO
+    # sets SESSION_STORE_PATH=/data/extensive-sso-sessions.db.
+    session_store_path: str = ""
+
     # Class-level (not constructor) — process-local in-memory session
     # store keyed by signed-cookie session id. Each AuthConfig instance
     # gets its own dict so two apps in the same process don't share
@@ -103,6 +108,7 @@ class AuthConfig:
           {prefix}SESSION_TTL_DAYS         — optional integer, default 14
           {prefix}ROOT_PATH                — optional, default ""
           {prefix}COOKIE_SECURE            — optional, "false" disables Secure
+          {prefix}SESSION_STORE_PATH       — optional; a SQLite file => sessions survive restarts
         """
         def _env(name: str, default: str | None = None) -> str | None:
             return os.environ.get(prefix + name, default)
@@ -156,6 +162,7 @@ class AuthConfig:
             sso_url=sso_url,
             sso_secret=sso_secret,
             sso_app=sso_app,
+            session_store_path=(_env("SESSION_STORE_PATH") or "").strip(),
         )
 
     def is_allowed(self, email: str) -> bool:
