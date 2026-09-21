@@ -65,6 +65,15 @@ def get_session_email(cfg: AuthConfig, request: Request) -> str | None:
     return record["email"] if record else None
 
 
+def get_session_name(cfg: AuthConfig, request: Request) -> str:
+    """Return the display name Google (or the SSO) gave for this session, or ''."""
+    sid = _decode_sid(cfg, request)
+    if sid is None:
+        return ""
+    record = _live_record(cfg, sid)
+    return (record or {}).get("name", "")
+
+
 def get_session_picture(cfg: AuthConfig, request: Request) -> str:
     """Return the Google profile picture URL for this session, or ''."""
     sid = _decode_sid(cfg, request)
@@ -79,12 +88,13 @@ def get_session_picture(cfg: AuthConfig, request: Request) -> str:
 # ---------------------------------------------------------------------------
 
 
-def create_session(cfg: AuthConfig, *, email: str, picture: str = "") -> str:
+def create_session(cfg: AuthConfig, *, email: str, picture: str = "", name: str = "") -> str:
     """Insert a new session and return the *signed* cookie value."""
     sid = secrets.token_urlsafe(32)
     cfg._sessions[sid] = {
         "email": email,
         "picture": picture,
+        "name": name,
         "expires_at": _now_utc() + cfg.session_ttl,
     }
     return _serializer(cfg).dumps(sid)
