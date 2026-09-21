@@ -34,6 +34,8 @@ SSO_APP=games            # this app's slug in the SSO registry
 
 `ALLOWED_EMAILS=*` admits any verified Google account — only the SSO itself uses that, because it decides access *after* login from its registry.
 
+**Sessions that survive a redeploy (v0.5):** set `SESSION_STORE_PATH=/data/<app>-sessions.db` and sessions (plus OAuth state) live in a SQLite table instead of process memory. The SSO uses it so a rebuild of auth.extensive.cloud no longer signs the family out.
+
 **No Sign-in page at all (v0.4):** call `sso_auto_login(cfg, request)` first thing in the app's `/login` route and return its response when it isn't `None`. A browser is sent straight into the SSO handshake (silent when an SSO session exists; straight to Google otherwise); monitors and scripts still get the page; `/login?signed_out=1` renders the page so a logout doesn't bounce you back in. In SSO mode `/auth/logout` ends the SSO session too and lands on `/login?signed_out=1`.
 
 ## What it deliberately doesn't do
