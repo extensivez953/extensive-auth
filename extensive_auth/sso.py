@@ -86,3 +86,34 @@ def sso_authorize_url(cfg: AuthConfig, *, state: str, return_url: str) -> str:
 
 def sso_logout_url(cfg: AuthConfig, *, return_url: str) -> str:
     return f"{cfg.sso_url.rstrip('/')}/logout?{urlencode({'return': return_url})}"
+
+
+def is_browser_navigation(request) -> bool:
+    """A person in a browser, not a monitor or a script.
+
+    Browsers send Sec-Fetch-Dest/Mode on navigations; older ones at least send
+    a Mozilla user agent and ask for text/html. httpx/requests/curl send neither,
+    so uptime checks keep getting the plain login page instead of a redirect.
+    """
+    h = request.headers
+    if h.get("sec-fetch-dest") == "document" or h.get("sec-fetch-mode") == "navigate":
+        return True
+    return "Mozilla/" in h.get("user-agent", "") and "text/html" in h.get("accept", "")
+
+
+def sso_auto_login(cfg: AuthConfig, request):
+    """For an app's /login page: in SSO mode, send a browser straight into the
+    SSO handshake instead of showing a Sign-in button. With an SSO session the
+    round trip is silent; without one the SSO goes straight to Google.
+
+    Returns a RedirectResponse to start the handshake, or None when the page
+    should render: not in SSO mode, not a browser navigation, or the person
+    just signed out (``?signed_out=1``) and must not be bounced straight back in.
+    """
+    from fastapi.responses import RedirectResponse
+
+    if not cfg.sso_enabled or not is_browser_navigation(request):
+        return None
+    if request.query_params.get("signed_out"):
+        return None
+    return RedirectResponse(url=(cfg.root_path or "") + "/auth/google/start", status_code=302)

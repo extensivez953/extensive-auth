@@ -44,7 +44,7 @@ from extensive_auth.session import (
     get_session_name,
     get_session_picture,
 )
-from extensive_auth.sso import SsoError, mint_sso_token, verify_sso_token
+from extensive_auth.sso import SsoError, mint_sso_token, sso_auto_login, verify_sso_token
 
 __all__ = [
     "AuthConfig",
@@ -58,10 +58,11 @@ __all__ = [
     "get_session_picture",
     "mint_sso_token",
     "new_csrf",
+    "sso_auto_login",
     "SsoError",
     "verify_sso_token",
     "require_user",
     "require_user_or_api_key",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

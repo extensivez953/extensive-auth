@@ -135,10 +135,32 @@ def test_sso_callback_404_when_not_in_sso_mode():
     assert client.get("/auth/sso/callback", params={"token": "x", "state": "y"}).status_code == 404
 
 
-def test_logout_everywhere_goes_to_sso():
+def test_logout_in_sso_mode_signs_out_everywhere_and_flags_signed_out():
     cfg = _sso_cfg()
     client = _app(cfg)
-    r = client.get("/auth/logout", params={"everywhere": "1"})
+    r = client.get("/auth/logout")
     assert r.status_code == 302
-    assert r.headers["location"].startswith("https://auth.example/logout?return=https%3A%2F%2Fgames.example%2Flogin")
-    assert client.get("/auth/logout").headers["location"] == "/login"
+    assert r.headers["location"] == "https://auth.example/logout?return=https%3A%2F%2Fgames.example%2Flogin%3Fsigned_out%3D1"
+    plain = _app(_sso_cfg(sso_url="", allowed_emails={"a@example.com"}))
+    assert plain.get("/auth/logout").headers["location"] == "/login"
+
+
+def test_sso_auto_login_only_for_browsers_and_not_after_signout():
+    from starlette.requests import Request as SRequest
+    from extensive_auth import sso_auto_login
+
+    def req(headers: dict, query: str = ""):
+        scope = {"type": "http", "method": "GET", "path": "/login", "query_string": query.encode(),
+                 "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()]}
+        return SRequest(scope)
+
+    cfg = _sso_cfg(root_path="/games")
+    browser = {"sec-fetch-dest": "document", "sec-fetch-mode": "navigate", "user-agent": "Mozilla/5.0", "accept": "text/html"}
+    r = sso_auto_login(cfg, req(browser))
+    assert r is not None and r.headers["location"] == "/games/auth/google/start"
+    old_browser = {"user-agent": "Mozilla/5.0 (Android)", "accept": "text/html,*/*"}
+    assert sso_auto_login(cfg, req(old_browser)) is not None
+    monitor = {"user-agent": "python-httpx/0.27", "accept": "*/*"}
+    assert sso_auto_login(cfg, req(monitor)) is None
+    assert sso_auto_login(cfg, req(browser, "signed_out=1")) is None
+    assert sso_auto_login(_sso_cfg(sso_url="", allowed_emails={"a@example.com"}), req(browser)) is None
